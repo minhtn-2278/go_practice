@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS employees (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    age INTEGER NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    position VARCHAR(100),
+    salary INTEGER NOT NULL,
+    department_id INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS employees_department_id_idx ON employees (department_id);

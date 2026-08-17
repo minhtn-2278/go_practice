@@ -1,0 +1,39 @@
+services:
+  go-postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    networks:
+      - employee_network
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-employee_db}
+      POSTGRES_USER: ${POSTGRES_USER:-employee_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-employee_dev_password}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - go_postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  go-adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    networks:
+      - employee_network
+    ports:
+      - "8081:8080"
+    depends_on:
+      go-postgres:
+        condition: service_healthy
+
+volumes:
+  go_postgres_data:
+
+networks:
+  employee_network:
+    driver: bridge
