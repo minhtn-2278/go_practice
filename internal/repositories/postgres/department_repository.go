@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"employee-management/internal/models"
+	"employee-management/internal/services"
 )
 
 type DepartmentRepository struct {
@@ -18,6 +19,31 @@ func NewDepartmentRepository(db *sql.DB) (*DepartmentRepository, error) {
 	}
 
 	return &DepartmentRepository{db: db}, nil
+}
+
+func (r *DepartmentRepository) ExistsByIDTx(ctx context.Context, tx *sql.Tx, id int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	const query = `
+		SELECT id
+		FROM departments
+		WHERE id = $1`
+	statement, err := tx.PrepareContext(ctx, query)
+	if err != nil {
+		return err
+	}
+	defer statement.Close()
+
+	var departmentID int64
+	if err := statement.QueryRowContext(ctx, id).Scan(&departmentID); errors.Is(err, sql.ErrNoRows) {
+		return services.ErrDepartmentNotFound
+	} else if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *DepartmentRepository) Create(ctx context.Context, department models.Department) (models.Department, error) {

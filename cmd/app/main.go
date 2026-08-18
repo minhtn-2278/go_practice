@@ -97,7 +97,12 @@ func getEnv(key string, fallback string) string {
 }
 
 func newHTTPMux(db *sql.DB) (*http.ServeMux, error) {
-	employeeRepository, err := postgres.NewEmployeeRepository(db)
+	departmentRepository, err := postgres.NewDepartmentRepository(db)
+	if err != nil {
+		return nil, fmt.Errorf("create department repository: %w", err)
+	}
+
+	employeeRepository, err := postgres.NewEmployeeRepository(db, departmentRepository)
 	if err != nil {
 		return nil, fmt.Errorf("create employee repository: %w", err)
 	}
@@ -110,11 +115,6 @@ func newHTTPMux(db *sql.DB) (*http.ServeMux, error) {
 	employeeHandler, err := handlers.NewEmployeeHandler(employeeService)
 	if err != nil {
 		return nil, fmt.Errorf("create employee handler: %w", err)
-	}
-
-	departmentRepository, err := postgres.NewDepartmentRepository(db)
-	if err != nil {
-		return nil, fmt.Errorf("create department repository: %w", err)
 	}
 
 	departmentService, err := services.NewDepartmentService(departmentRepository)

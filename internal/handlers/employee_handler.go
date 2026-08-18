@@ -61,7 +61,8 @@ func (h *EmployeeHandler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	employees, err := h.service.List(r.Context(), pagination)
+	keyword := r.URL.Query().Get("keyword")
+	employees, err := h.service.List(r.Context(), pagination, keyword)
 	if err != nil {
 		writeEmployeeServiceError(w, err)
 		return
@@ -159,6 +160,8 @@ func writeEmployeeServiceError(w http.ResponseWriter, err error) {
 		utils.WriteError(w, http.StatusBadRequest, services.ErrInvalidEmployeeAge.Error())
 	case errors.Is(err, services.ErrInvalidEmployeeSalary):
 		utils.WriteError(w, http.StatusBadRequest, services.ErrInvalidEmployeeSalary.Error())
+	case errors.Is(err, services.ErrDepartmentNotFound):
+		utils.WriteError(w, http.StatusNotFound, services.ErrDepartmentNotFound.Error())
 	case errors.Is(err, models.ErrInvalidPagination):
 		utils.WriteError(w, http.StatusBadRequest, models.ErrInvalidPagination.Error())
 	default:

@@ -4,36 +4,65 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
+	"strings"
 
 	"employee-management/internal/models"
 	"employee-management/internal/services"
 )
 
 type EmployeeRepository struct {
-	db *sql.DB
+	db                   *sql.DB
+	departmentRepository *DepartmentRepository
 }
 
 var _ services.EmployeeRepository = (*EmployeeRepository)(nil)
 
-func NewEmployeeRepository(db *sql.DB) (*EmployeeRepository, error) {
+func NewEmployeeRepository(db *sql.DB, departmentRepository *DepartmentRepository) (*EmployeeRepository, error) {
 	if db == nil {
 		return nil, errors.New("database is required")
 	}
+	if departmentRepository == nil {
+		return nil, errors.New("department repository is required")
+	}
 
-	return &EmployeeRepository{db: db}, nil
+	return &EmployeeRepository{
+		db:                   db,
+		departmentRepository: departmentRepository,
+	}, nil
 }
 
-func (r *EmployeeRepository) Create(ctx context.Context, employee models.Employee) (models.Employee, error) {
+func (r *EmployeeRepository) Create(ctx context.Context, employee models.Employee) (storedEmployee models.Employee, returnErr error) {
 	if err := ctx.Err(); err != nil {
 		return models.Employee{}, err
 	}
 
-	const query = `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.Employee{}, err
+	}
+
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && returnErr == nil {
+			returnErr = rollbackErr
+		}
+	}()
+
+	if err := r.departmentRepository.ExistsByIDTx(ctx, tx, int64(employee.DepartmentID)); err != nil {
+		return models.Employee{}, err
+	}
+
+	const createEmployeeQuery = `
 		INSERT INTO employees (age, name, position, salary, department_id)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, created_at, updated_at`
 
-	statement, err := r.db.PrepareContext(ctx, query)
+	statement, err := tx.PrepareContext(ctx, createEmployeeQuery)
 	if err != nil {
 		return models.Employee{}, err
 	}
@@ -41,7 +70,6 @@ func (r *EmployeeRepository) Create(ctx context.Context, employee models.Employe
 
 	err = statement.QueryRowContext(
 		ctx,
-		query,
 		employee.Age,
 		employee.Name,
 		employee.Position,
@@ -51,6 +79,11 @@ func (r *EmployeeRepository) Create(ctx context.Context, employee models.Employe
 	if err != nil {
 		return models.Employee{}, err
 	}
+
+	if err = tx.Commit(); err != nil {
+		return models.Employee{}, err
+	}
+	committed = true
 
 	return employee, nil
 }
@@ -92,22 +125,37 @@ func (r *EmployeeRepository) GetByID(ctx context.Context, id int64) (models.Empl
 	return employee, nil
 }
 
-func (r *EmployeeRepository) List(ctx context.Context, pagination models.Pagination) ([]models.Employee, int64, error) {
+func (r *EmployeeRepository) List(ctx context.Context, pagination models.Pagination, keyword string) ([]models.Employee, int64, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err
 	}
 
-	const countQuery = `SELECT COUNT(*) FROM employees`
-	var total int64
-	if err := r.db.QueryRowContext(ctx, countQuery).Scan(&total); err != nil {
-		return nil, 0, err
+	keyword = strings.TrimSpace(keyword)
+	filterArgs := make([]any, 0, 1)
+	whereClause := ""
+	if keyword != "" {
+		filterArgs = append(filterArgs, "%"+keyword+"%")
+		whereClause = " WHERE name ILIKE $1 OR position ILIKE $1"
 	}
 
-	const listQuery = `
-		SELECT id, age, name, position, salary, department_id, created_at, updated_at
-		FROM employees
-		ORDER BY id
-		LIMIT $1 OFFSET $2`
+	countQuery := "SELECT COUNT(*) FROM employees" + whereClause
+	listQuery := "SELECT id, age, name, position, salary, department_id, created_at, updated_at FROM employees" +
+		whereClause +
+		" ORDER BY id LIMIT $" + strconv.Itoa(len(filterArgs)+1) +
+		" OFFSET $" + strconv.Itoa(len(filterArgs)+2)
+	listArgs := append([]any(nil), filterArgs...)
+	listArgs = append(listArgs, pagination.Limit, pagination.Offset())
+
+	countStatement, err := r.db.PrepareContext(ctx, countQuery)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer countStatement.Close()
+
+	var total int64
+	if err := countStatement.QueryRowContext(ctx, filterArgs...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
 
 	statement, err := r.db.PrepareContext(ctx, listQuery)
 	if err != nil {
@@ -115,7 +163,7 @@ func (r *EmployeeRepository) List(ctx context.Context, pagination models.Paginat
 	}
 	defer statement.Close()
 
-	rows, err := statement.QueryContext(ctx, pagination.Limit, pagination.Offset())
+	rows, err := statement.QueryContext(ctx, listArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -146,8 +194,28 @@ func (r *EmployeeRepository) List(ctx context.Context, pagination models.Paginat
 	return employees, total, nil
 }
 
-func (r *EmployeeRepository) Update(ctx context.Context, employee models.Employee) (models.Employee, error) {
+func (r *EmployeeRepository) Update(ctx context.Context, employee models.Employee) (storedEmployee models.Employee, returnErr error) {
 	if err := ctx.Err(); err != nil {
+		return models.Employee{}, err
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.Employee{}, err
+	}
+
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && returnErr == nil {
+			returnErr = rollbackErr
+		}
+	}()
+
+	if err := r.departmentRepository.ExistsByIDTx(ctx, tx, int64(employee.DepartmentID)); err != nil {
 		return models.Employee{}, err
 	}
 
@@ -162,7 +230,7 @@ func (r *EmployeeRepository) Update(ctx context.Context, employee models.Employe
 		WHERE id = $6
 		RETURNING id, created_at, updated_at`
 
-	statement, err := r.db.PrepareContext(ctx, query)
+	statement, err := tx.PrepareContext(ctx, query)
 	if err != nil {
 		return models.Employee{}, err
 	}
@@ -170,7 +238,6 @@ func (r *EmployeeRepository) Update(ctx context.Context, employee models.Employe
 
 	err = statement.QueryRowContext(
 		ctx,
-		query,
 		employee.Age,
 		employee.Name,
 		employee.Position,
@@ -184,6 +251,11 @@ func (r *EmployeeRepository) Update(ctx context.Context, employee models.Employe
 	if err != nil {
 		return models.Employee{}, err
 	}
+
+	if err = tx.Commit(); err != nil {
+		return models.Employee{}, err
+	}
+	committed = true
 
 	return employee, nil
 }
