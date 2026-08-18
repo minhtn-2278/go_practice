@@ -53,7 +53,9 @@ func run() error {
 		return err
 	}
 
-	httpHandler := middleware.Logging(middleware.Recover(mux))
+	httpHandler := middleware.BasicAuth(mux)
+	httpHandler = middleware.Recover(httpHandler)
+	httpHandler = middleware.Logging(httpHandler)
 
 	server := &http.Server{
 		Addr:              getEnv("HTTP_ADDR", ":8080"),
@@ -112,14 +114,14 @@ func newHTTPMux(db *sql.DB) (*http.ServeMux, error) {
 		return nil, fmt.Errorf("create employee service: %w", err)
 	}
 
-	employeeHandler, err := handlers.NewEmployeeHandler(employeeService)
-	if err != nil {
-		return nil, fmt.Errorf("create employee handler: %w", err)
-	}
-
 	departmentService, err := services.NewDepartmentService(departmentRepository)
 	if err != nil {
 		return nil, fmt.Errorf("create department service: %w", err)
+	}
+
+	employeeHandler, err := handlers.NewEmployeeHandler(employeeService)
+	if err != nil {
+		return nil, fmt.Errorf("create employee handler: %w", err)
 	}
 
 	departmentHandler, err := handlers.NewDepartmentHandler(departmentService)
