@@ -1,9 +1,15 @@
 package handlers
 
 import (
+	"encoding/csv"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"sync"
 
 	"employee-management/internal/models"
 	"employee-management/internal/services"
@@ -11,7 +17,8 @@ import (
 )
 
 type EmployeeHandler struct {
-	service services.EmployeeUseCase
+	service  services.EmployeeUseCase
+	exportMu sync.Mutex
 }
 
 type updateEmployeeRequest struct {
@@ -20,6 +27,18 @@ type updateEmployeeRequest struct {
 	Position     *string `json:"position"`
 	Salary       *int    `json:"salary"`
 	DepartmentID *int    `json:"department_id"`
+}
+
+const (
+	employeeExportDir    = "exports"
+	employeeJSONFilename = "employees.json"
+	employeeCSVFilename  = "employees.csv"
+)
+
+type employeeExportResponse struct {
+	Message  string `json:"message"`
+	JSONFile string `json:"json_file"`
+	CSVFile  string `json:"csv_file"`
 }
 
 func NewEmployeeHandler(service services.EmployeeUseCase) (*EmployeeHandler, error) {
@@ -33,6 +52,7 @@ func NewEmployeeHandler(service services.EmployeeUseCase) (*EmployeeHandler, err
 func (h *EmployeeHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /employees", h.create)
 	mux.HandleFunc("GET /employees", h.list)
+	mux.HandleFunc("POST /employees/export", h.export)
 	mux.HandleFunc("GET /employees/{id}", h.detail)
 	mux.HandleFunc("PUT /employees/{id}", h.update)
 	mux.HandleFunc("DELETE /employees/{id}", h.delete)
@@ -62,7 +82,7 @@ func (h *EmployeeHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	keyword := r.URL.Query().Get("keyword")
-	employees, err := h.service.List(r.Context(), pagination, keyword)
+	employees, err := h.service.List(r.Context(), &pagination, keyword)
 	if err != nil {
 		writeEmployeeServiceError(w, err)
 		return
@@ -144,6 +164,124 @@ func (h *EmployeeHandler) delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.WriteJSON(w, http.StatusOK, map[string]string{"message": "ok"})
+}
+
+func (h *EmployeeHandler) export(w http.ResponseWriter, r *http.Request) {
+	h.exportMu.Lock()
+	defer h.exportMu.Unlock()
+
+	result, err := h.service.List(r.Context(), nil, r.URL.Query().Get("keyword"))
+	if err != nil {
+		writeEmployeeServiceError(w, err)
+		return
+	}
+	employees := result.Data
+
+	var waitGroup sync.WaitGroup
+	var mutex sync.Mutex
+	exportErrors := make([]error, 0, 2)
+
+	addExportError := func(err error) {
+		if err == nil {
+			return
+		}
+
+		mutex.Lock()
+		exportErrors = append(exportErrors, err)
+		mutex.Unlock()
+	}
+
+	waitGroup.Add(2)
+	go func() {
+		defer waitGroup.Done()
+		addExportError(writeEmployeesJSON(employeeExportDir, employees))
+	}()
+	go func() {
+		defer waitGroup.Done()
+		addExportError(writeEmployeesCSV(employeeExportDir, employees))
+	}()
+	waitGroup.Wait()
+
+	if len(exportErrors) > 0 {
+		utils.WriteError(w, http.StatusInternalServerError, "Could not export employees")
+		return
+	}
+
+	utils.WriteJSON(w, http.StatusOK, employeeExportResponse{
+		Message:  "Employees exported successfully",
+		JSONFile: employeeJSONFilename,
+		CSVFile:  employeeCSVFilename,
+	})
+}
+
+func writeEmployeesJSON(exportDir string, employees []models.Employee) error {
+	if err := os.MkdirAll(exportDir, 0o755); err != nil {
+		return fmt.Errorf("create export directory: %w", err)
+	}
+
+	path := filepath.Join(exportDir, employeeJSONFilename)
+	file, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create JSON export: %w", err)
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(employees); err != nil {
+		return fmt.Errorf("encode JSON export: %w", err)
+	}
+
+	return nil
+}
+
+func writeEmployeesCSV(exportDir string, employees []models.Employee) error {
+	if err := os.MkdirAll(exportDir, 0o755); err != nil {
+		return fmt.Errorf("create export directory: %w", err)
+	}
+
+	path := filepath.Join(exportDir, employeeCSVFilename)
+	file, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create CSV export: %w", err)
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	if err := writer.Write([]string{
+		"id",
+		"age",
+		"name",
+		"position",
+		"salary",
+		"department_id",
+		"created_at",
+		"updated_at",
+	}); err != nil {
+		return fmt.Errorf("write CSV header: %w", err)
+	}
+
+	for _, employee := range employees {
+		if err := writer.Write([]string{
+			strconv.FormatInt(employee.ID, 10),
+			strconv.Itoa(employee.Age),
+			employee.Name,
+			employee.Position,
+			strconv.Itoa(employee.Salary),
+			strconv.Itoa(employee.DepartmentID),
+			employee.CreatedAt.Format("2006-01-02T15:04:05.999999999Z07:00"),
+			employee.UpdatedAt.Format("2006-01-02T15:04:05.999999999Z07:00"),
+		}); err != nil {
+			return fmt.Errorf("write CSV row: %w", err)
+		}
+	}
+
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return fmt.Errorf("flush CSV export: %w", err)
+	}
+
+	return nil
 }
 
 func employeeID(r *http.Request) (int64, error) {

@@ -36,7 +36,7 @@ func (p Pagination) WithTotal(total int64) Pagination {
 	}
 
 	p.Total = total
-	if total == 0 {
+	if total == 0 || p.Limit <= 0 {
 		return p
 	}
 

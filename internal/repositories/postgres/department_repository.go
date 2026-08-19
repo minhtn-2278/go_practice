@@ -156,7 +156,6 @@ func (r *DepartmentRepository) ListEmployee(ctx context.Context, departmentID in
 
 	rows, err := statement.QueryContext(
 		ctx,
-		query,
 		departmentID,
 		pagination.Limit,
 		pagination.Offset(),

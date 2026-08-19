@@ -19,7 +19,7 @@ var (
 type EmployeeRepository interface {
 	Create(ctx context.Context, employee models.Employee) (models.Employee, error)
 	GetByID(ctx context.Context, id int64) (models.Employee, error)
-	List(ctx context.Context, pagination models.Pagination, keyword string) ([]models.Employee, int64, error)
+	List(ctx context.Context, pagination *models.Pagination, keyword string) ([]models.Employee, int64, error)
 	Update(ctx context.Context, employee models.Employee) (models.Employee, error)
 	Delete(ctx context.Context, id int64) error
 }
@@ -27,7 +27,7 @@ type EmployeeRepository interface {
 type EmployeeUseCase interface {
 	Create(ctx context.Context, employee models.Employee) (models.Employee, error)
 	GetByID(ctx context.Context, id int64) (models.Employee, error)
-	List(ctx context.Context, pagination models.Pagination, keyword string) (models.PaginatedResult[models.Employee], error)
+	List(ctx context.Context, pagination *models.Pagination, keyword string) (models.PaginatedResult[models.Employee], error)
 	Update(ctx context.Context, employee models.Employee) (models.Employee, error)
 	Delete(ctx context.Context, id int64) error
 }
@@ -66,14 +66,18 @@ func (s *EmployeeService) GetByID(ctx context.Context, id int64) (models.Employe
 	return s.repository.GetByID(ctx, id)
 }
 
-func (s *EmployeeService) List(ctx context.Context, pagination models.Pagination, keyword string) (models.PaginatedResult[models.Employee], error) {
+func (s *EmployeeService) List(ctx context.Context, pagination *models.Pagination, keyword string) (models.PaginatedResult[models.Employee], error) {
 	if err := validateContext(ctx); err != nil {
 		return models.PaginatedResult[models.Employee]{}, err
 	}
 
-	pagination, err := models.NewPagination(pagination.Page, pagination.Limit)
-	if err != nil {
-		return models.PaginatedResult[models.Employee]{}, err
+	var normalizedPagination models.Pagination
+	if pagination != nil {
+		validatedPagination, err := models.NewPagination(pagination.Page, pagination.Limit)
+		if err != nil {
+			return models.PaginatedResult[models.Employee]{}, err
+		}
+		normalizedPagination = validatedPagination
 	}
 
 	employees, total, err := s.repository.List(ctx, pagination, strings.TrimSpace(keyword))
@@ -81,7 +85,7 @@ func (s *EmployeeService) List(ctx context.Context, pagination models.Pagination
 		return models.PaginatedResult[models.Employee]{}, err
 	}
 
-	return models.NewPaginatedResult(employees, pagination, total), nil
+	return models.NewPaginatedResult(employees, normalizedPagination, total), nil
 }
 
 func (s *EmployeeService) Update(ctx context.Context, employee models.Employee) (models.Employee, error) {

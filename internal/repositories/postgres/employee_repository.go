@@ -125,7 +125,7 @@ func (r *EmployeeRepository) GetByID(ctx context.Context, id int64) (models.Empl
 	return employee, nil
 }
 
-func (r *EmployeeRepository) List(ctx context.Context, pagination models.Pagination, keyword string) ([]models.Employee, int64, error) {
+func (r *EmployeeRepository) List(ctx context.Context, pagination *models.Pagination, keyword string) ([]models.Employee, int64, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err
 	}
@@ -140,11 +140,13 @@ func (r *EmployeeRepository) List(ctx context.Context, pagination models.Paginat
 
 	countQuery := "SELECT COUNT(*) FROM employees" + whereClause
 	listQuery := "SELECT id, age, name, position, salary, department_id, created_at, updated_at FROM employees" +
-		whereClause +
-		" ORDER BY id LIMIT $" + strconv.Itoa(len(filterArgs)+1) +
-		" OFFSET $" + strconv.Itoa(len(filterArgs)+2)
+		whereClause + " ORDER BY id"
 	listArgs := append([]any(nil), filterArgs...)
-	listArgs = append(listArgs, pagination.Limit, pagination.Offset())
+	if pagination != nil {
+		listQuery += " LIMIT $" + strconv.Itoa(len(listArgs)+1) +
+			" OFFSET $" + strconv.Itoa(len(listArgs)+2)
+		listArgs = append(listArgs, pagination.Limit, pagination.Offset())
+	}
 
 	countStatement, err := r.db.PrepareContext(ctx, countQuery)
 	if err != nil {
